@@ -221,7 +221,14 @@ class LoginView(View):
         login(request, user)
         # 5.根据用户选择的是否记住登录状态来进行判断
         # 6.为了首页显示我们需要设置一些cookie信息
-        response = redirect(reverse('home:index'))
+
+        # 根据next参数来进行页面的跳转
+        next_page = request.GET.get('next')
+        if next_page:
+            response = redirect(next_page)
+        else:
+            response = redirect(reverse('home:index'))
+
         if remember != 'on':    # 没有记住用户信息
             # 浏览器关闭之后
             request.session.set_expiry(0)
@@ -318,3 +325,112 @@ class ForgetPasswordView(View):
         response = redirect(reverse('users:login'))
         # 7.返回响应
         return response
+
+# 用户中心视图
+from django.contrib.auth.mixins import LoginRequiredMixin
+# LoginRequiredMixin
+# 如果用户未登录的话，则会进行默认的跳转
+# 默认的跳转链接是：accounts/login/?next=XXX
+class UserCenterView(LoginRequiredMixin, View):
+
+    def get(self, request):
+        # 获取登录用户的信息
+        user = request.user
+        # 组织获取用户的信息
+        context = {
+            'username': user.username,
+            'mobile': user.mobile,
+            'avatar': user.avatar.url if user.avatar else None,
+            'user_desc': user.user_desc
+        }
+        return render(request, 'center.html', context=context)
+
+    def post(self, request):
+        """
+        1.接收参数
+        2.将参数保存起来
+        3.更新cookie中的username信息
+        4.刷新当前页面（重定向操作）
+        5.返回响应
+        :param request:
+        :return:
+        """
+
+        user = request.user
+        # 1.接收参数
+        username = request.POST.get('username', user.username)
+        user_desc = request.POST.get('desc', user.user_desc)
+        avatar = request.FILES.get('avatar')
+        # 2.将参数保存起来
+        try:
+            user.username = username
+            user.user_desc = user_desc
+            if avatar:
+                user.avatar = avatar
+            user.save()
+        except Exception as e:
+            logger.error(e)
+            return HttpResponseBadRequest('修改失败，请稍后再试')
+        # 3.更新cookie中的username信息
+
+        # 4.刷新当前页面（重定向操作）
+        reponse = redirect(reverse('users:center'))
+        reponse.set_cookie('username', user.username, max_age=14*3600*24)
+        # 5.返回响应
+        return reponse
+
+# 写文章
+from home.models import ArticleCategory, Article
+class WriteBlogView(LoginRequiredMixin,View):
+
+    def get(self, request):
+        # 查询所有分类模型
+        categories = ArticleCategory.objects.all()
+
+        context = {
+            'categories': categories
+        }
+        return render(request, 'write_blog.html', context=context)
+
+    def post(self, request):
+        """
+        # 1.接收数据
+        # 2.验证数据
+        # 3.数据入库
+        # 4.跳转到指定页面(暂时首页)
+        :param request:
+        :return:
+        """
+        # 1.接收数据
+        avatar = request.FILES.get('avatar')
+        title = request.POST.get('title')
+        category_id = request.POST.get('category')
+        tags = request.POST.get('tags')
+        sumary = request.POST.get('sumary')
+        content = request.POST.get('content')
+        user = request.user
+        # 2.验证数据
+        # 2.1 验证参数是否齐全
+        if not all([avatar, title, category_id, sumary, content]):
+            return HttpResponseBadRequest('参数不全')
+        # 2.2 判断分类id
+        try:
+            category = ArticleCategory.objects.get(id=category_id)
+        except ArticleCategory.DoesNotExist:
+            return HttpResponseBadRequest('没有此分类')
+        # 3.数据入库
+        try:
+            article = Article.objects.create(
+                author=user,
+                avatar=avatar,
+                title=title,
+                category=category,
+                tags=tags,
+                sumary=sumary,
+                content=content
+            )
+        except Exception as e:
+            logger.error(e)
+            return HttpResponseBadRequest('发布失败，请稍后再试')
+        # 4.跳转到指定页面(暂时首页)
+        return redirect(reverse('home:index'))
